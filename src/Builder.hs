@@ -50,7 +50,7 @@ data Output = OutputConfig
 
 build :: Setup -> S.Set Output -> FilePath -> IO ()
 build setup output outDir = do
-  let cacheDir = "./oplwork/"
+  cacheDir <- (FS.</> "oplwork") <$> pwd
   testdir outDir >>= (\exists -> if exists then rmtree outDir else return ())
   mktree outDir
   mktree cacheDir
@@ -67,8 +67,6 @@ build setup output outDir = do
                 (kernelPath, kernelVersion) <- getLatestKernelSources cacheDir
                 sequence ((\tc -> buildKernel tc config kernelPath kernelVersion workDir) <$> mToolchain)
               else return Nothing
-
-    error "foo"
 
     fs <- if OutputFileSystem `S.member` output
           then return Nothing
@@ -130,16 +128,19 @@ buildKernel
   = do
   let kernelDir = toolchainPath FS.</> "kernel"
       kernelOutDir = workDir FS.</> "kernelOut"
-  view $ inshell ("git archive --format=tar --prefix=kernel/ --remote=" <> (showT kernelSrc) <> " " <> kernelVersion <> " | (cd " <> (showT toolchainPath) <> " && tar xf -)" ) empty
-  cp configPath (kernelDir FS.</> ".config")
-  view $ inshell ("cd " <> showT kernelDir <> " && ./scripts/kconfig/merge_config.sh -n " <> showT configPath) empty
+      kernelInputs = workDir FS.</> "kernelInputs"
   mkdir kernelOutDir
-  view $ ls workDir
-  view $ inshell ("PROOT_NO_SECCOMP=1 proot -r " <> showT toolchainPath <> binds kernelOutDir <> " /bin/bash -c " <> buildScript) empty
+  mkdir kernelInputs
+  cp configPath (kernelInputs FS.</> FS.filename configPath)
+  view $ inshell ("systemd-nspawn -D " <> showT toolchainPath
+                   <> " --overlay=" <> showT kernelSrc <> "::/linux"
+                   <> " --bind-ro=" <> (showT kernelInputs) <> ":/inputs"
+                   <> " --bind=" <> showT kernelOutDir <> ":/kernelOutDir"
+                   <> " /bin/bash -c \"" <> buildCmds <> "\""
+                 ) empty
   return $ Kernel kernelOutDir
   where
-    binds kernelOut = " -b " <> showT kernelOut <> ":/kernelOut"
-    buildScript = "\"cd /kernel && make all && INSTALL_PATH=/kernelOut make install\""
+    buildCmds = "cd /kernel && ./scripts/kconfig/merge_config.sh -n /inputs/config && make all && INSTALL_PATH=/kernelOut make install"
 
 
 
@@ -195,16 +196,17 @@ extractTarball downloadedName = do
       outDir = FS.dropExtensions downloadedName
   isExtracted <- testdir outDir
   unless isExtracted $ do
-    mktree outDir
-    print "extracting toolchain"
-    view $ inshell ( "tar xvjfp " <> tarball
-                     <> " -C " <> (showT outDir)
-                     <> " --xattrs --numeric-owner"
-                     <> " --exclude=dev"
-                   ) empty
+    handle (\(SomeException _)-> rmdir outDir) $ do
+      mktree outDir
+      print "extracting toolchain"
+      view $ inshell ( "tar xvjfp " <> tarball
+                       <> " -C " <> (showT outDir)
+                       <> " --xattrs --numeric-owner"
+                       <> " --exclude=dev"
+                     ) empty
 
-    view $ inshell ("systemd-nspawn -D " <> (showT outDir)
-                     <> " /bin/bash -c \"emerge-webrsync && emerge bc\"") empty
+      view $ inshell ("systemd-nspawn -D " <> (showT outDir)
+                      <> " /bin/bash -c \"emerge-webrsync && emerge -o sys-kernel/vanilla-sources\"") empty
   return outDir
   
 
@@ -281,10 +283,9 @@ getLatestKernelSources baseDir = do
     fetchKernelVersion version = do
       runInDir kernelDir $ do
         res <- shellStrictWithErr ("git rev-parse " <> version) empty
-        print res
         case res of
-          (_, _, "") -> return ()
-          (_, "", _) -> view $ inshell ("git fetch --depth=1 origin tag " <> version) empty
+          (ExitSuccess, _, _) -> return ()
+          _ -> view $ inshell ("git fetch --depth=1 origin tag " <> version) empty
 
     initKernelRepo = do
       shouldSkip <- testdir kernelDir
