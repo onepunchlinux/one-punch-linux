@@ -5,11 +5,12 @@ module ModuleMap where
 import SimpleConfig
 import Data.Monoid ((<>))
 import qualified Data.Text as T
-import qualified Data.Map as M
+--import qualified Data.Map as M
+import qualified Data.HashMap.Strict.InsOrd as M
 
 data ModuleOpt = Y | M | N | S T.Text | I Int | H T.Text
 
-type KernelConfig = M.Map T.Text ModuleOpt
+type KernelConfig = M.InsOrdHashMap T.Text ModuleOpt
 
 mkKernelConfig :: Setup -> KernelConfig
 mkKernelConfig (Setup _ _ _ _ [] []) = M.unions [ archConfig ]
@@ -21,7 +22,7 @@ showKernelConfig =
     showModuleOpt Y = "y"
     showModuleOpt M = "m"
     showModuleOpt N = "n"
-    showModuleOpt (S str) = str
+    showModuleOpt (S str) = "\"" <> str <> "\""
     showModuleOpt (I i) = T.pack $ show i
     showModuleOpt (H hx) = hx
 

@@ -25,16 +25,26 @@ data Machine = MacbookAir2012
              | VirtualBox
              | XPS13
              | Custom Motherboard Processor VideoCard
+             deriving (Eq, Show)
 
-data Motherboard
+data Motherboard = MB deriving (Eq, Show)
 
-data Processor = Intel
-               | AMDCPU
+data Processor = Intel64
+               | Intel32
+               | AMD64
+               | I686
+               | I486
+               | Arm7a
+               | Arm6j
+               | Arm4tl
+               | Arm5tel
+               deriving (Eq, Show)
 
 data VideoCard = Nvidia
                | AMDGPU
+               deriving (Eq, Show)
 
-data WindowManager = None
+data WindowManager = NoWM
                    | Sway
                    | I3
 

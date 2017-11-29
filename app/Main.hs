@@ -1,8 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import SimpleConfig
-import ModuleMap
+import Builder
 import qualified Data.Text.IO as T
+import qualified Data.Set as S
 
 main :: IO ()
 main = do
@@ -13,6 +15,5 @@ main = do
                     , bootOptions = []
                     , optimizations = []
                     }
-  let config = mkKernelConfig setup
-  T.writeFile "config" (showKernelConfig config)
+  build setup (S.fromList [OutputConfig, OutputKernel]) "./out/"
   return ()
