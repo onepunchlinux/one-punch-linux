@@ -86,7 +86,10 @@ build setup output outDir = do
 
   where
     saveOutput :: FilePath -> OutputWrapper -> IO ()
-    saveOutput outDir (KernelWrap (Kernel kernelPath)) = cptree kernelPath outDir
+    saveOutput outDir (KernelWrap (Kernel kernelPath)) = do
+      let kernelOut = outDir FS.</> "kernel"
+      mkdir kernelOut
+      cptree kernelPath kernelOut
     saveOutput outDir (ConfigWrap (Config configPath)) = cp configPath (outDir FS.</> FS.filename configPath)
     saveOutput outDir (FileSystemWrap (FileSystem fsPath)) = cptree fsPath outDir
     saveOutput outDir (ISOWrap (ISO isoPath)) = cp isoPath outDir
@@ -128,19 +131,20 @@ buildKernel
   = do
   let kernelDir = toolchainPath FS.</> "kernel"
       kernelOutDir = workDir FS.</> "kernelOut"
-      kernelInputs = workDir FS.</> "kernelInputs"
+      kernelWorkDir = workDir FS.</> "kernelWorkDir"
   mkdir kernelOutDir
-  mkdir kernelInputs
-  cp configPath (kernelInputs FS.</> FS.filename configPath)
+  mkdir kernelWorkDir
+  view $ inshell ("git archive --format=tar --remote=" <> showT kernelSrc <> " " <> kernelVersion <> " | (cd " <> showT kernelWorkDir <> " && tar xf -)") empty
+  cp configPath (kernelWorkDir FS.</> FS.filename configPath)
   view $ inshell ("systemd-nspawn -D " <> showT toolchainPath
-                   <> " --overlay=" <> showT kernelSrc <> "::/linux"
-                   <> " --bind-ro=" <> (showT kernelInputs) <> ":/inputs"
+                   <> " --bind=" <> showT kernelWorkDir <> ":/linux"
                    <> " --bind=" <> showT kernelOutDir <> ":/kernelOutDir"
+                   <> " --ephemeral"
                    <> " /bin/bash -c \"" <> buildCmds <> "\""
                  ) empty
   return $ Kernel kernelOutDir
   where
-    buildCmds = "cd /kernel && ./scripts/kconfig/merge_config.sh -n /inputs/config && make all && INSTALL_PATH=/kernelOut make install"
+    buildCmds = "cd /linux && ./scripts/kconfig/merge_config.sh -n ./config && make all && INSTALL_PATH=/kernelOutDir make install"
 
 
 
@@ -206,8 +210,14 @@ extractTarball downloadedName = do
                      ) empty
 
       view $ inshell ("systemd-nspawn -D " <> (showT outDir)
-                      <> " /bin/bash -c \"emerge-webrsync && emerge -o sys-kernel/vanilla-sources\"") empty
+                      <> " /bin/bash -c \"" <> script <> "\"") empty
+
   return outDir
+
+  where
+    script = " emerge-webrsync"
+             <> " && emerge -o sys-kernel/gentoo-sources"
+             <> " && emerge --quiet app-arch/lz4"
   
 
 downloadTarball :: T.Text -> T.Text -> FileDigest -> IO FilePath
