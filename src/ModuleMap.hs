@@ -5,7 +5,6 @@ module ModuleMap where
 import SimpleConfig
 import Data.Monoid ((<>))
 import qualified Data.Text as T
---import qualified Data.Map as M
 import qualified Data.HashMap.Strict.InsOrd as M
 
 data ModuleOpt = Y | M | N | S T.Text | I Int | H T.Text

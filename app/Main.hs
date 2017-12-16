@@ -15,5 +15,5 @@ main = do
                     , bootOptions = []
                     , optimizations = []
                     }
-  build setup (S.fromList [OutputConfig, OutputKernel]) "./out/"
+  build setup (S.fromList [OutputFileSystem]) "./out/"
   return ()

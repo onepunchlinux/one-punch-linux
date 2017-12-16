@@ -31,6 +31,7 @@ import qualified Filesystem.Path.CurrentOS as FS
 import           ModuleMap
 import           Network.HTTP.Simple
 import           Network.HTTP.Types.Header
+import           Portage
 import           Prelude hiding (FilePath)
 import           SimpleConfig
 import qualified System.IO
@@ -68,8 +69,9 @@ build setup output outDir = do
                 sequence ((\tc -> buildKernel tc config kernelPath kernelVersion workDir) <$> mToolchain)
               else return Nothing
 
-    fs <- if OutputFileSystem `S.member` output
-          then return Nothing
+    fs <- if output `containsAny` [OutputFileSystem, OutputISO]
+          then do
+            sequence ((\tc -> buildFS tc setup workDir) <$> mToolchain)
           else return Nothing
 
     iso <- if OutputISO `S.member` output
@@ -146,7 +148,33 @@ buildKernel
   where
     buildCmds = "cd /linux && ./scripts/kconfig/merge_config.sh -n ./config && make all && INSTALL_PATH=/kernelOutDir make install"
 
+buildFS :: Toolchain -> Setup -> FilePath -> IO FileSystem
+buildFS (Toolchain toolchainPath) setup workDir = do
+  let fsOutDir = workDir FS.</> "fsOut"
+      basePortageConfDir = toolchainPath FS.</> "etc/portage"
+  mkdir fsOutDir
+  portageConfDir <- writePortageConfig (mkPortageConf setup) workDir
+  view $ inshell ("systemd-nspawn -D " <> showT toolchainPath
+                 <> " --bind=" <> showT fsOutDir <> ":/fsOut" 
+                 <> " --overlay=" <> showT basePortageConfDir <> ":" <> showT portageConfDir <> "::/etc/portage/" 
+                 <> " --ephemeral"
+                 <> " /bin/bash -c \"" <> (buildCmds fsOutDir) <> "\""
+                 ) empty
+  return $ FileSystem fsOutDir
 
+  where
+    buildCmds fsOutDir = "emerge --quiet --update --newuse --deep @world && emerge --quiet --root=" <> (showT fsOutDir) <> " " <> packages
+    packages = "systemd bash coreutils shadow libc"
+
+writePortageConfig :: PortageConfig -> FilePath -> IO FilePath
+writePortageConfig portageConf workDir = do
+  let portageConfDir = workDir FS.</> "portageConf"
+  mkdir portageConfDir
+  writeMakeConf (makeConf portageConf) portageConfDir
+  return portageConfDir
+  where
+    writeMakeConf makeConf portageConfDir =
+      writeTextFile (portageConfDir FS.</> "make.conf") (makeConfToFile makeConf)
 
 showT :: FilePath -> T.Text
 showT = T.pack . FS.encodeString
@@ -200,7 +228,9 @@ extractTarball downloadedName = do
       outDir = FS.dropExtensions downloadedName
   isExtracted <- testdir outDir
   unless isExtracted $ do
-    handle (\(SomeException _)-> rmdir outDir) $ do
+    handle (\(SomeException _)-> return ())
+             --rmtree outDir) $
+             $ do
       mktree outDir
       print "extracting toolchain"
       view $ inshell ( "tar xvjfp " <> tarball
@@ -215,9 +245,12 @@ extractTarball downloadedName = do
   return outDir
 
   where
-    script = " emerge-webrsync"
-             <> " && emerge -o sys-kernel/gentoo-sources"
-             <> " && emerge --quiet app-arch/lz4"
+    script = "mkdir --parents /etc/portage/repos.conf && "
+             <> "cp /usr/share/portage/config/repos.conf /etc/portage/repos.conf/gentoo.conf && "
+             <> "emerge-webrsync || true &&"
+             <> "eselect profile set 1 &&"
+             <> "emerge -o sys-kernel/gentoo-sources && "
+             <> "emerge --quiet app-arch/lz4"
   
 
 downloadTarball :: T.Text -> T.Text -> FileDigest -> IO FilePath
